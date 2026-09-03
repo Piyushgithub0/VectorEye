@@ -23,3 +23,15 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Backend
+backend/.env
+backend/uploads/*
+backend/storage/*
+!backend/uploads/.gitkeep
+!backend/storage/.gitkeep
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+.venv/
+venv/
