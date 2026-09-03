@@ -53,14 +53,17 @@ function ExportMenu({ onExport }: { onExport: (type: FeatureType) => void }) {
       <summary className="cursor-pointer list-none rounded-md border border-purple-400/40 px-3 py-1.5 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-400/10">
         Export
       </summary>
-      <div className="absolute bottom-full right-0 mb-2 w-52 panel z-20 rounded-md py-1">
+      <div className="absolute bottom-full right-0 mb-2 w-56 panel z-20 rounded-md py-1">
+        <p className="px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider text-text-muted">
+          Export as image (marked)
+        </p>
         {types.map((type) => (
           <button
             key={type}
             onClick={() => onExport(type)}
             className="block w-full px-4 py-2 text-left text-xs font-mono text-text-primary transition-colors hover:bg-cyan-400/10"
           >
-            Export {FEATURE_LABELS[type]} (GeoJSON)
+            {FEATURE_LABELS[type]} · marked photo
           </button>
         ))}
       </div>
@@ -136,25 +139,45 @@ export function QCPanel({
                     const forcedReview = activeType === 'farms'
                     return (
                       <li key={f.id}>
-                        <button
-                          onClick={() => onSelectFeature(f)}
-                          className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                            selectedId === f.id
-                              ? 'bg-cyan-400/10'
-                              : 'hover:bg-cyan-400/5'
+                        <div
+                          className={`flex w-full items-center gap-3 px-4 py-2.5 transition-colors ${
+                            selectedId === f.id ? 'bg-cyan-400/10' : 'hover:bg-cyan-400/5'
                           }`}
                         >
-                          <ConfidenceDot confidence={f.confidence} forced={forcedReview} />
-                          <span className="font-mono text-xs text-cyan-400">
-                            #{String(f.id).padStart(3, '0')}
-                          </span>
-                          <span className="font-mono text-xs text-text-primary">
-                            {pct(f.confidence)}
-                          </span>
-                          <span className="ml-auto">
-                            <StatusTag status={f.status} forcedReview={forcedReview} />
-                          </span>
-                        </button>
+                          <button
+                            onClick={() => onSelectFeature(f)}
+                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          >
+                            <ConfidenceDot confidence={f.confidence} forced={forcedReview} />
+                            <span className="font-mono text-xs text-cyan-400">
+                              #{String(f.id).padStart(3, '0')}
+                            </span>
+                            <span className="font-mono text-xs text-text-primary">
+                              {pct(f.confidence)}
+                            </span>
+                            <span className="ml-auto">
+                              <StatusTag status={f.status} forcedReview={forcedReview} />
+                            </span>
+                          </button>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              onClick={() => onApprove(f.id)}
+                              title="Approve"
+                              aria-label={`Approve feature ${f.id}`}
+                              className="rounded border border-conf-high/40 p-1 leading-none text-conf-high transition-colors hover:bg-conf-high/15"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                            </button>
+                            <button
+                              onClick={() => onReject(f.id)}
+                              title="Reject"
+                              aria-label={`Reject feature ${f.id}`}
+                              className="rounded border border-conf-low/40 p-1 leading-none text-conf-low transition-colors hover:bg-conf-low/15"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                            </button>
+                          </div>
+                        </div>
                       </li>
                     )
                   })

@@ -18,11 +18,13 @@ def get_features(
     feature_type: str,
     min_confidence: float = Query(0.0, ge=0, le=1),
     status: str | None = Query(None),
+    orthophoto_id: int | None = Query(None),
 ) -> dict[str, Any]:
     """Return a GeoJSON FeatureCollection for a single class.
 
-    Query params support a minimum confidence floor and a status filter
-    (pending | needs_review | approved | rejected).
+    Query params support a minimum confidence floor, a status filter
+    (pending | needs_review | approved | rejected) and an optional
+    orthophoto_id to scope features to a specific uploaded image.
     """
     if feature_type not in FEATURE_TYPES:
         raise HTTPException(status_code=404, detail=f"Unknown feature type: {feature_type}")
@@ -34,6 +36,8 @@ def get_features(
     )
     if status:
         stmt = stmt.where(Feature.status == status)
+    if orthophoto_id:
+        stmt = stmt.where(Feature.orthophoto_id == orthophoto_id)
 
     with get_sessionmaker()() as db:
         rows = db.execute(stmt).scalars().all()

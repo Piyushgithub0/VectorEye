@@ -35,23 +35,19 @@ class DeepForestNode(BaseNode):
             from deepforest import main
 
             model = main.deepforest()
-            model.use_release()
-            if self.device != "cpu":
-                try:
-                    model.use_gpu()
-                except Exception:
-                    pass
+            # DeepForest 2.x loads pretrained weights from Hugging Face via
+            # load_model (use_release/use_gpu were removed in 2.x).
+            model.load_model(model_name="weecology/deepforest-tree", revision="main")
             self._model = model
             return model
         except Exception as exc:  # pragma: no cover - depends on deepforest
             raise InferenceError(f"DeepForest failed to load: {exc}") from exc
 
-    def run(self, image: Any) -> list[dict[str, Any]]:
+    def run(self, image: Any, feature_type: str = "trees") -> list[dict[str, Any]]:
         """Detect tree crowns.
 
         image: a Pillow image or numpy RGB array of the tile/crop.
-        Returns a list of boxes (crown bounding boxes) that can be converted to
-        polygons by the vectorizer/router.
+        Returns a list of dicts each with a 'box' (x1,y1,x2,y2) and 'score'.
         """
         if not self.check_available():
             raise InferenceError(
@@ -59,9 +55,21 @@ class DeepForestNode(BaseNode):
             )
         model = self._get_model()
         img = _to_numpy(image)
-        boxes = model.predict_image(image=img, return_plot=False)
-        # boxes is a pandas DataFrame with ['xmin','ymin','xmax','ymax'].
-        return [{"box": row} for _, row in boxes.iterrows()]
+        # predict_image expects a float32, channels-last (H,W,3) uint8-range array.
+        if img.dtype != "float32":
+            img = img.astype("float32")
+        df = model.predict_image(image=img)
+        out: list[dict[str, Any]] = []
+        if df is None:
+            return out
+        for _, row in df.iterrows():
+            x1 = float(row["xmin"])
+            y1 = float(row["ymin"])
+            x2 = float(row["xmax"])
+            y2 = float(row["ymax"])
+            score = float(row.get("score", 0.5))
+            out.append({"box": [x1, y1, x2, y2], "score": score})
+        return out
 
 
 def _to_numpy(image: Any) -> np.ndarray:

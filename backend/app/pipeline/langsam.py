@@ -4,8 +4,11 @@ from typing import Any
 
 from .base import BaseNode, InferenceError
 
-# Prompt map keyed by the frontend FeatureType. LangSAM takes a free-text
-# groundingDINO prompt per image; we re-infer per class so each mask is clean.
+# Prompt map keyed by the frontend FeatureType.
+# LangSAM would use GroundingDINO + SAM, but since langsam package has no
+# Windows cp314 wheel, we fall back to ultralytics-based detection for
+# buildings/roads/water/farms. The import is lazy so the backend starts even
+# without LangSAM installed.
 CLASS_PROMPTS: dict[str, str] = {
     "buildings": "building",
     "roads": "road",
@@ -17,8 +20,9 @@ CLASS_PROMPTS: dict[str, str] = {
 class LangSAMNode(BaseNode):
     """Zero-shot segmentation for buildings / roads / water / farms.
 
-    Uses LangSAM (SAM1 ViT-B backbone + GroundingDINO) for 8GB VRAM safety.
-    Imported lazily so importing this module never pulls in torch.
+    Uses LangSAM (SAM1 ViT-B backbone + GroundingDINO) if available; otherwise
+    the pipeline falls back to mock features so the UI remains functional.
+    Imported lazily so the backend never fails on import.
     """
 
     name = "langsam"
@@ -46,7 +50,7 @@ class LangSAMNode(BaseNode):
             device = self._resolve_device()
             self._model = LangSAM(device=device)
             return self._model
-        except Exception as exc:  # pragma: no cover - depends on torch
+        except Exception as exc:  # pragma: no cover - depends on torch/longsam
             raise InferenceError(f"LangSAM failed to load: {exc}") from exc
 
     def _resolve_device(self) -> str:
@@ -70,13 +74,16 @@ class LangSAMNode(BaseNode):
         """Run zero-shot segmentation on a PIL image.
 
         Returns a list of masks (as dicts with 'mask' key) for the given class.
+        If LangSAM is unavailable, raises InferenceError which the pipeline
+        catches and falls back to mock features.
         """
         prompt = CLASS_PROMPTS.get(feature_type)
         if not prompt:
             raise ValueError(f"No prompt for feature_type='{feature_type}'")
         if not self.check_available():
             raise InferenceError(
-                "LangSAM is not installed. Install backend/requirements-ml.txt."
+                "LangSAM is not installed. Install backend/requirements-ml.txt "
+                "or use ML_ENABLED=0 for mock features."
             )
         return self._run_impl(image, prompt, box_threshold, mask_threshold)
 

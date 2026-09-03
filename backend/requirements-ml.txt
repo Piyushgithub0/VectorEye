@@ -1,11 +1,12 @@
-# Optional ML inference dependencies.
-# Installed separately (torch is large). The backend runs without these;
-# the pipeline imports them lazily and reports an error if missing.
+# ML inference dependencies.
+# Installed separately. Ultralytics (YOLO) and DeepForest both install on Windows.
+# LangSAM (GroundingDINO + SAM) has no cp314 Windows wheel, so structure classes
+# (buildings/roads/water/farms) are served by Ultralytics YOLO segmentation and
+# trees by DeepForest. scikit-image is required by the mask vectorizer.
 
 torch>=2.2.0
 torchvision>=0.17.0
-langsam>=1.0.0        # SAM + GroundingDINO zero-shot segmentation
-ultralytics>=8.0.0    # GroundingDINO / detection backend
-segment-anything>=1.0
-deepforest>=0.7.0     # tree crown detection
+ultralytics>=8.0.0        # YOLOv8/v11 general detection + instance segmentation
+deepforest>=0.7.0         # tree crown detection (installs on Windows)
+scikit-image>=0.22.0      # find_contours for mask -> polygon vectorization
 Pillow>=10.0.0

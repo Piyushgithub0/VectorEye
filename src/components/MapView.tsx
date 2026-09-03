@@ -12,6 +12,27 @@ interface MapViewProps {
   onSelectFeature: (feature: VectorFeature) => void
 }
 
+function polygonCentroid(geometry: Geometry): Geometry {
+  const ty = geometry.type
+  let ring: number[][] = []
+  if (ty === 'Polygon') ring = geometry.coordinates[0] as number[][]
+  else if (ty === 'MultiPolygon') ring = geometry.coordinates[0][0] as number[][]
+  else if (ty === 'Point') return geometry
+  else if (ty === 'LineString') {
+    const c = geometry.coordinates as number[][]
+    return { type: 'Point', coordinates: [c[0][0], c[0][1]] }
+  }
+  if (ring.length === 0) return { type: 'Point', coordinates: [0, 0] }
+  let x = 0
+  let y = 0
+  for (const [lon, lat] of ring) {
+    x += lon
+    y += lat
+  }
+  const n = ring.length + 1 // include the closing repeat
+  return { type: 'Point', coordinates: [x / n, y / n] }
+}
+
 function styleFeature(
   feature: Feature | undefined,
   type: string,
@@ -105,20 +126,39 @@ export function MapView({
         type,
         L.geoJSON(null, {
           style: (feature?: Feature) => styleFeature(feature, type),
-          onEachFeature: (feature: Feature, layer: L.Layer) => {
-            if (layer instanceof L.Path) {
-              layer.on('click', () => {
-                onSelectFeature({
-                  id: feature.properties?.id ?? 0,
-                  type: feature.properties?.type ?? '',
-                  className: feature.properties?.className ?? '',
-                  confidence: Number(feature.properties?.confidence ?? 0),
-                  status: feature.properties?.status ?? 'pending',
-                  geometry: feature.geometry,
-                  created_at: feature.properties?.created_at ?? '',
-                } as VectorFeature)
+          pointToLayer: (feature, latlng) => {
+            // Distinct shape per type: trees as small green circles, others as
+            // polygons (buildings/roads/water/farms render as their geometry).
+            if (type === 'trees') {
+              return L.circleMarker(latlng, {
+                radius: 8,
+                weight: 2,
+                color: '#22c55e',
+                fillColor: '#22c55e',
+                fillOpacity: 0.55,
               })
             }
+            const col = styleFeature(feature, type).color ?? '#22c55e'
+            return L.circleMarker(latlng, {
+              radius: 6,
+              weight: 1.5,
+              color: col,
+              fillColor: col,
+              fillOpacity: 0.5,
+            })
+          },
+          onEachFeature: (feature: Feature, layer: L.Layer) => {
+            layer.on('click', () => {
+              onSelectFeature({
+                id: feature.properties?.id ?? 0,
+                type: feature.properties?.type ?? '',
+                className: feature.properties?.className ?? '',
+                confidence: Number(feature.properties?.confidence ?? 0),
+                status: feature.properties?.status ?? 'pending',
+                geometry: feature.geometry,
+                created_at: feature.properties?.created_at ?? '',
+              } as VectorFeature)
+            })
           },
         }),
       )
@@ -141,8 +181,10 @@ export function MapView({
             class: f.className,
             confidence: f.confidence,
             status: f.status,
+            type: f.type,
           },
-          geometry: f.geometry as Geometry,
+          // Render trees as distinct circle markers via their polygon centroid.
+          geometry: (type === 'trees' ? polygonCentroid(f.geometry) : f.geometry) as Geometry,
         } as Feature))
         group.addData({
           type: 'FeatureCollection',
@@ -173,7 +215,12 @@ export function MapView({
         if (props && Number(props.id ?? -1) === selectedId) {
           path.setStyle({ weight: 3, opacity: 1 })
           selectedRef.current = path
-          map.flyToBounds((path as L.Polygon).getBounds(), { padding: [40, 40] })
+          const ll = (layer as L.CircleMarker).getLatLng?.()
+          if (ll) {
+            map.flyToBounds(L.latLngBounds(ll, ll), { padding: [60, 60] })
+          } else if (typeof (path as L.Polygon).getBounds === 'function') {
+            map.flyToBounds((path as L.Polygon).getBounds(), { padding: [40, 40] })
+          }
         }
       })
     })
@@ -182,7 +229,7 @@ export function MapView({
   return (
     <div
       ref={containerRef}
-      className="h-full w-full contour-bg"
+      className={`h-full w-full contour-bg ${hasProject ? 'project' : ''} ${dragOver ? 'dragging' : ''}`}
       onDragOver={(e) => {
         e.preventDefault()
         setDragOver(true)
@@ -193,40 +240,6 @@ export function MapView({
         setDragOver(false)
       }}
     >
-      {!hasProject && (
-        <div
-          className={`absolute inset-0 z-[1000] flex items-center justify-center ${
-            dragOver ? 'bg-cyan-400/10' : ''
-          }`}
-        >
-          <div
-            className={`panel rounded-lg px-10 py-8 text-center transition-colors ${
-              dragOver ? 'border-2 border-dashed border-cyan-400' : ''
-            }`}
-          >
-            <div className="mx-auto mb-4 h-12 w-12 text-cyan-400">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                className="h-full w-full"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
-                />
-              </svg>
-            </div>
-            <p className="text-sm font-medium text-text-primary">Drop an orthophoto to begin</p>
-            <p className="mt-1 font-mono text-[11px] text-text-muted">Supports GeoTIFF</p>
-            <p className="mt-3 font-mono text-[10px] text-text-muted opacity-60">
-              POST /upload &middot; EPSG:32643
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

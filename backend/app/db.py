@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import settings
@@ -62,9 +62,14 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create tables (schema only). PostGIS extension must be enabled on the DB."""
+    """Create tables and enable PostGIS extension on the DB."""
     from . import models  # noqa: F401  (ensure models are registered)
 
+    # First enable PostGIS extension
+    with get_engine().begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+
+    # Then create tables
     Base.metadata.create_all(bind=get_engine())
 
 

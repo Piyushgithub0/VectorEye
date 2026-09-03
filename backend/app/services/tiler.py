@@ -83,6 +83,68 @@ class Tiler:
             data = src.read(window=window)
             return data, self._window_bounds_ll(src, window)
 
+    def crop_window_transform(
+        self,
+        lon: float,
+        lat: float,
+        size_px: int = 256,
+    ) -> tuple[Any, list[list[float]]]:
+        """Return (geotransform, bounds_ll) for a crop centered at (lon, lat).
+
+        geotransform is a GDAL-style 6-tuple [c, a, b, f, d, e] mapping
+        pixel (col, row) -> (lon, lat) in EPSG:4326, so detections inside the
+        crop can be georeferenced directly. Returns (None, None) if the raster
+        is not georeferenced.
+        """
+        import numpy as np
+
+        with rasterio.open(self.path) as src:
+            if src.crs is None or src.transform is None:
+                return None, None
+            col, row = _lonlat_to_rowcol(src, lon, lat)
+            half = size_px // 2
+            window = rasterio.windows.Window(
+                col - half, row - half, size_px, size_px
+            ).intersection(rasterio.windows.Window(0, 0, src.width, src.height))
+
+            w, s = src.xy(window.row_off + 0, window.col_off + 0)
+            e, n = src.xy(window.row_off, window.col_off + window.width)
+            # Pixel size in projected CRS units.
+            xpix = src.transform.a
+            ypix = src.transform.e
+            proj_crs = src.crs
+
+            # Build a source-CRS affine mapping crop pixels (col,row) -> (x,y).
+            # src.xy(row, col) gives (x, y) in source CRS.
+            origin_x = w
+            origin_y = n - ypix  # top edge in source CRS
+            # We'll construct an origin pixel->geotransform later via corners.
+            src_aff = [xpix, 0.0, origin_x, 0.0, ypix, origin_y]
+
+            corners_src = np.array(
+                [
+                    [origin_x, origin_y],
+                    [origin_x + xpix * window.width, origin_y + ypix * window.height],
+                ]
+            )
+            if proj_crs.to_epsg() != 4326 and proj_crs.is_projected:
+                from pyproj import Transformer
+
+                t = Transformer.from_crs(proj_crs, "EPSG:4326", always_xy=True)
+                corners_ll = t.transform(
+                    corners_src[:, 0], corners_src[:, 1]
+                )
+            else:
+                corners_ll = (corners_src[:, 0], corners_src[:, 1])
+
+            lon0, lat0 = corners_ll[0][0], corners_ll[1][0]
+            lon1, lat1 = corners_ll[0][1], corners_ll[1][1]
+            dlon = (lon1 - lon0) / window.width
+            dlat = (lat1 - lat0) / window.height
+
+            geo_t = [dlon, 0.0, lon0, 0.0, dlat, lat0]
+            return geo_t, make_bounds(lon0, lat0, lon1, lat1)
+
     def _window_bounds_ll(self, src: Any, window: Any) -> list[list[float]]:
         """Project the raster-window bounding box into EPSG:4326."""
         try:

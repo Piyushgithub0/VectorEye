@@ -5,8 +5,7 @@ python-multipart>=0.0.9
 
 # --- Database / ORM ---
 SQLAlchemy>=2.0.30
-psycopg2-binary>=2.9.9
-psycopg>=3.1.19       # psycopg3 driver used by SQLAlchemy 2.x
+psycopg2-binary>=2.9.9   # use pg2 not pg3 to avoid libpq dependency on Windows
 GeoAlchemy2>=0.15.0   # PostGIS geometry support
 
 # --- Pydantic ---

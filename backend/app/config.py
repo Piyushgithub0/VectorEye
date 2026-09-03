@@ -41,7 +41,7 @@ class Settings:
 
         # Database
         self.database_url = _env_str("DATABASE_URL")
-        self.database_driver = _env_str("DATABASE_DRIVER", "psycopg")
+        self.database_driver = _env_str("DATABASE_DRIVER", "psycopg2")
 
         # CORS
         raw_origins = _env_str("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")

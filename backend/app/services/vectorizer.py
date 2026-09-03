@@ -81,6 +81,102 @@ class Vectorizer:
             )
         return features
 
+    def box_to_geojson(
+        self,
+        box: Any,
+        *,
+        geo_transform: Any | None,
+        class_name: str = "",
+        confidence: float = 0.5,
+        feature_type: str = "buildings",
+    ) -> list[dict[str, Any]]:
+        """Return a GeoJSON rectangle Polygon (EPSG:4326) from a (x1,y1,x2,y2) box.
+
+        The box coords are in pixel space of the orthophoto crop. They are mapped
+        into lon/lat via the same GDAL-style affine as masks.
+        """
+        try:
+            x1, y1, x2, y2 = (float(v) for v in box)
+        except (TypeError, ValueError):
+            return []
+        if x2 - x1 < 2 or y2 - y1 < 2:
+            return []
+
+        geo_t = geo_transform or [1, 0, 0, 0, -1, 0]
+        a, b, c, d, e, f = geo_t[0], geo_t[1], geo_t[2], geo_t[3], geo_t[4], geo_t[5]
+        # Pixel (col,row) -> (lon, lat).
+        def to_xy(col: float, row: float) -> tuple[float, float]:
+            x = a * col + b * row + c
+            y = d * col + e * row + f
+            return float(x), float(y)
+
+        # Polygon corners in (lon, lat) order.
+        ring = [
+            list(to_xy(x1, y1)),
+            list(to_xy(x2, y1)),
+            list(to_xy(x2, y2)),
+            list(to_xy(x1, y2)),
+            list(to_xy(x1, y1)),
+        ]
+        return [
+            {
+                "type": "Feature",
+                "properties": {
+                    "class": class_name,
+                    "confidence": float(confidence),
+                    "type": feature_type,
+                },
+                "geometry": {"type": "Polygon", "coordinates": [ring]},
+            }
+        ]
+
+    def line_to_geojson(
+        self,
+        points: list[list[float]],
+        *,
+        geo_transform: Any | None,
+        class_name: str = "",
+        confidence: float = 0.5,
+        feature_type: str = "roads",
+    ) -> list[dict[str, Any]]:
+        """Return a GeoJSON LineString (EPSG:4326) from pixel-space polyline points.
+
+        Points are [(col, row), ...] in the crop; each is mapped to (lon, lat)
+        with the same GDAL-style affine used for masks/boxes.
+        """
+        if not points or len(points) < 2:
+            return []
+        geo_t = geo_transform or [1, 0, 0, 0, -1, 0]
+        a, b, c, d, e, f = geo_t[0], geo_t[1], geo_t[2], geo_t[3], geo_t[4], geo_t[5]
+
+        def to_xy(col: float, row: float) -> list[float]:
+            x = a * col + b * row + c
+            y = d * col + e * row + f
+            return [float(x), float(y)]
+
+        coords = []
+        seen: set[tuple[float, float]] = set()
+        for col, row in points:
+            pt = to_xy(col, row)
+            key = (round(pt[0], 9), round(pt[1], 9))
+            if key in seen:
+                continue
+            seen.add(key)
+            coords.append(pt)
+        if len(coords) < 2:
+            return []
+        return [
+            {
+                "type": "Feature",
+                "properties": {
+                    "class": class_name,
+                    "confidence": float(confidence),
+                    "type": feature_type,
+                },
+                "geometry": {"type": "LineString", "coordinates": coords},
+            }
+        ]
+
 
 def _pixel_ring_to_geojson(contour: np.ndarray, geo_t: Any) -> list[list[float]]:
     """Map a find_contours output (row, col) ring to (lon, lat) ring.
