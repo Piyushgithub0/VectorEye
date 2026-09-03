@@ -1,0 +1,11 @@
+# Optional ML inference dependencies.
+# Installed separately (torch is large). The backend runs without these;
+# the pipeline imports them lazily and reports an error if missing.
+
+torch>=2.2.0
+torchvision>=0.17.0
+langsam>=1.0.0        # SAM + GroundingDINO zero-shot segmentation
+ultralytics>=8.0.0    # GroundingDINO / detection backend
+segment-anything>=1.0
+deepforest>=0.7.0     # tree crown detection
+Pillow>=10.0.0

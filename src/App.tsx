@@ -1,121 +1,147 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useCallback, useState, useRef } from 'react'
+import type { FeatureType, Orthophoto, PipelineStage, VectorFeature } from './types'
+import { TopBar } from './components/TopBar'
+import { MapView } from './components/MapView'
+import { FEATURE_TYPES } from './lib/constants'
+import { buildDemoFeatures, DEMO_ORTHOPHOTO } from './lib/mockData'
+import { QCPanel } from './components/QCPanel'
+
+type QCView = 'detail' | 'list'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [stage, setStage] = useState<PipelineStage>('idle')
+  const [orthophoto, setOrthophoto] = useState<Orthophoto | null>(null)
+  const [features, setFeatures] = useState<VectorFeature[]>([])
+  const [activeTypes, setActiveTypes] = useState<Set<FeatureType>>(() => new Set(FEATURE_TYPES))
+  const [activeType, setActiveType] = useState<FeatureType>('buildings')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [qcView, setQcView] = useState<QCView>('detail')
+  const [editing, setEditing] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const hasProject = stage !== 'idle'
+
+  const toggleType = useCallback((type: FeatureType) => {
+    setActiveTypes((prev) => {
+      const next = new Set(prev)
+      if (next.has(type)) next.delete(type)
+      else next.add(type)
+      return next
+    })
+    setActiveType(type)
+    setSelectedId(null)
+  }, [setActiveTypes, setActiveType])
+
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (!file) return
+      setStage('tiling')
+      setSelectedId(null)
+      setFeatures([])
+      const stages: PipelineStage[] = ['detecting', 'vectorizing', 'complete']
+      let i = 0
+      const interval = window.setInterval(() => {
+        i++
+        if (i < stages.length) {
+          setStage(stages[i])
+        } else {
+          window.clearInterval(interval)
+          const demo = buildDemoFeatures()
+          setFeatures(demo)
+          setOrthophoto(DEMO_ORTHOPHOTO as unknown as Orthophoto)
+          window.setTimeout(() => {}, 4000)
+        }
+      }, 1200)
+    },
+    [],
+  )
+
+  const handleApprove = useCallback((id: number) => {
+    setFeatures((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, status: 'approved' } : x)),
+    )
+    if (selectedId === id) setSelectedId(id)
+  }, [selectedId])
+
+  const handleReject = useCallback((id: number) => {
+    setFeatures((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, status: 'rejected' } : x)),
+    )
+    if (selectedId === id) setSelectedId(id)
+  }, [selectedId])
+
+  const handleExport = useCallback((type: FeatureType) => {
+    const geoms = features.filter((f) => f.type === type && f.status !== 'rejected')
+    const fc = {
+      type: 'FeatureCollection',
+      features: geoms.map((f) => ({
+        type: 'Feature',
+        properties: {
+          id: f.id,
+          class: f.className,
+          confidence: f.confidence,
+          status: f.status,
+        },
+        geometry: f.geometry,
+      })),
+    }
+    const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${type}-vectoreye.geojson`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [features])
+
+  const onSelectFeature = useCallback((f: VectorFeature) => {
+    setSelectedId(f.id)
+    setQcView('detail')
+    setEditing(false)
+  }, [])
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="contour-bg flex h-screen flex-col">
+      <TopBar
+        stage={stage}
+        hasProject={hasProject}
+        activeTypes={activeTypes}
+        onToggleType={toggleType}
+        onFileSelected={handleFileChange}
+        fileInputRef={fileInputRef}
+        onBrowseClick={() => fileInputRef.current?.click()}
+      />
 
-      <div className="ticks"></div>
+      <div className="relative flex-1">
+        <MapView
+          hasProject={hasProject}
+          orthophoto={orthophoto}
+          features={features}
+          visibleTypes={activeTypes}
+          selectedId={selectedId}
+          onSelectFeature={(f) => {
+            onSelectFeature(f)
+          }}
+        />
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+        {hasProject && (
+          <QCPanel
+            activeType={activeType}
+            features={features}
+            selectedId={selectedId}
+            view={qcView}
+            onViewChange={setQcView}
+            onSelectFeature={onSelectFeature}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onToggleEdit={() => setEditing((e) => !e)}
+            editing={editing}
+            onExport={handleExport}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 
