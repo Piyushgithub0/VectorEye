@@ -5,12 +5,10 @@ interface UploadProgressProps {
 }
 
 const STAGES = [
-  { key: 'tiling', label: 'TILING', sub: 'Reading the terrain' },
+  { key: 'tiling', label: 'TILING', sub: 'Reading terrain' },
   { key: 'detecting', label: 'DETECTING', sub: 'AI scanning features' },
   { key: 'vectorizing', label: 'VECTORIZING', sub: 'Building geometry' },
-  { key: 'mapping', label: 'MAPPING', sub: 'Anchoring to photo' },
   { key: 'complete', label: 'READY', sub: 'Features mapped' },
-  { key: 'error', label: 'ERROR', sub: 'Pipeline failed' },
 ]
 
 // Map backend stages to a 0..4 progress index for the stepper.
@@ -65,7 +63,7 @@ export function UploadProgress({ status }: UploadProgressProps) {
         </div>
 
         {/* Stepper */}
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-4 gap-3">
           {STAGES.map((s) => {
             const isDone = done(s.key)
             const isActive = active(s.key)

@@ -210,15 +210,50 @@ class SemanticBuildingNode(BaseNode):
         """Clear the cached per-image class map (called once per new image)."""
         self._class_map = None
 
+    def semantic_masks_batch(self, images: list[Any]) -> list[np.ndarray | None]:
+        """Run semantic segmentation on a batch of images (GPU batch inference)."""
+        if not images:
+            return []
+        if not self.check_available():
+            raise InferenceError(
+                "Ultralytics is not installed. Install backend/requirements-ml.txt."
+            )
+        model = self._get_model()
+        batch_imgs = [_prep_image(img) for img in images]
+        results = model.predict(
+            source=batch_imgs,
+            device=self._device_id(),
+            verbose=False,
+        )
+        out: list[np.ndarray | None] = []
+        for result in results:
+            sm = result.semantic_mask
+            if sm is None:
+                out.append(None)
+                continue
+            try:
+                out.append(np.asarray(sm.data.cpu()))
+            except Exception:
+                _log.exception("semantic mask coercion failed")
+                out.append(None)
+        return out
+
+    def run_on_class_map(self, class_map: np.ndarray, feature_type: str) -> list[dict[str, Any]]:
+        """Extract detections for one feature class from an existing class map."""
+        if feature_type == "buildings":
+            return _building_instances(class_map)
+        if feature_type == "roads":
+            return _road_lines(class_map)
+        if feature_type == "farms":
+            return _terrain_instances(class_map)
+        return []
+
     def _semantic_mask(self, image: Any) -> np.ndarray | None:
         """Return (and cache) the per-pixel (H,W) uint8 class-id map, or None."""
         if self._class_map is not None:
             return self._class_map
         model = self._get_model()
-        img = np.asarray(image)
-        if img.ndim == 3 and img.shape[0] <= 3 and img.shape[0] != img.shape[-1]:
-            img = np.transpose(img, (1, 2, 0))  # (C,H,W) -> (H,W,C)
-        img = np.clip(img, 0, 255).astype(np.uint8)
+        img = _prep_image(image)
         results = model.predict(source=img, device=self._device_id(), verbose=False)
         sm = results[0].semantic_mask
         if sm is None:
@@ -239,15 +274,7 @@ class SemanticBuildingNode(BaseNode):
         class_map = self._semantic_mask(image)
         if class_map is None:
             return []
-
-        if feature_type == "buildings":
-            return _building_instances(class_map)
-        if feature_type == "roads":
-            return _road_lines(class_map)
-        if feature_type == "farms":
-            return _terrain_instances(class_map)
-        # water (and anything else) has no Cityscapes class -> no output.
-        return []
+        return self.run_on_class_map(class_map, feature_type)
 
 
 def _building_instances(class_map: np.ndarray) -> list[dict[str, Any]]:
@@ -417,3 +444,10 @@ def _compactness(region: Any) -> float:
         return float(region.perimeter / max(region.area**0.5, 1e-6)) if region.perimeter else 0.5
     except Exception:
         return 0.5
+
+
+def _prep_image(image: Any) -> np.ndarray:
+    img = np.asarray(image)
+    if img.ndim == 3 and img.shape[0] <= 3 and img.shape[0] != img.shape[-1]:
+        img = np.transpose(img, (1, 2, 0))
+    return np.clip(img, 0, 255).astype(np.uint8)

@@ -89,15 +89,7 @@ class Tiler:
         lat: float,
         size_px: int = 256,
     ) -> tuple[Any, list[list[float]]]:
-        """Return (geotransform, bounds_ll) for a crop centered at (lon, lat).
-
-        geotransform is a GDAL-style 6-tuple [c, a, b, f, d, e] mapping
-        pixel (col, row) -> (lon, lat) in EPSG:4326, so detections inside the
-        crop can be georeferenced directly. Returns (None, None) if the raster
-        is not georeferenced.
-        """
-        import numpy as np
-
+        """Return (geotransform, bounds_ll) for a crop centered at (lon, lat)."""
         with rasterio.open(self.path) as src:
             if src.crs is None or src.transform is None:
                 return None, None
@@ -106,20 +98,69 @@ class Tiler:
             window = rasterio.windows.Window(
                 col - half, row - half, size_px, size_px
             ).intersection(rasterio.windows.Window(0, 0, src.width, src.height))
+            return self._window_transform(src, window)
 
+    def iter_tiles(
+        self,
+        tile_size: int = 1024,
+        overlap: float = 0.15,
+    ):
+        """Yield tile crops covering the full raster for batched GPU inference.
+
+        Each item is a dict with keys:
+          data       – rasterio band array (C,H,W)
+          geo_t      – GDAL affine mapping crop pixels -> EPSG:4326 (lon, lat)
+          bounds_ll  – [[south, west], [north, east]]
+          col_off    – pixel column offset in source raster
+          row_off    – pixel row offset in source raster
+        """
+        overlap = max(0.0, min(0.5, overlap))
+        stride = max(1, int(tile_size * (1.0 - overlap)))
+
+        with rasterio.open(self.path) as src:
+            if src.crs is None or src.transform is None:
+                return
+            full = rasterio.windows.Window(0, 0, src.width, src.height)
+            row = 0
+            while row < src.height:
+                col = 0
+                while col < src.width:
+                    window = rasterio.windows.Window(col, row, tile_size, tile_size)
+                    window = window.intersection(full)
+                    if window.width < 64 or window.height < 64:
+                        col += stride
+                        continue
+                    data = src.read(window=window)
+                    geo_t, bounds_ll = self._window_transform(src, window)
+                    if geo_t is None:
+                        col += stride
+                        continue
+                    yield {
+                        "data": data,
+                        "geo_t": geo_t,
+                        "bounds_ll": bounds_ll,
+                        "col_off": int(window.col_off),
+                        "row_off": int(window.row_off),
+                    }
+                    if col + tile_size >= src.width:
+                        break
+                    col += stride
+                if row + tile_size >= src.height:
+                    break
+                row += stride
+
+    def _window_transform(self, src: Any, window: Any) -> tuple[Any, list[list[float]] | None]:
+        """Return (geotransform, bounds_ll) for an arbitrary raster window."""
+        import numpy as np
+
+        try:
             w, s = src.xy(window.row_off + 0, window.col_off + 0)
             e, n = src.xy(window.row_off, window.col_off + window.width)
-            # Pixel size in projected CRS units.
             xpix = src.transform.a
             ypix = src.transform.e
             proj_crs = src.crs
-
-            # Build a source-CRS affine mapping crop pixels (col,row) -> (x,y).
-            # src.xy(row, col) gives (x, y) in source CRS.
             origin_x = w
-            origin_y = n - ypix  # top edge in source CRS
-            # We'll construct an origin pixel->geotransform later via corners.
-            src_aff = [xpix, 0.0, origin_x, 0.0, ypix, origin_y]
+            origin_y = n - ypix
 
             corners_src = np.array(
                 [
@@ -131,9 +172,7 @@ class Tiler:
                 from pyproj import Transformer
 
                 t = Transformer.from_crs(proj_crs, "EPSG:4326", always_xy=True)
-                corners_ll = t.transform(
-                    corners_src[:, 0], corners_src[:, 1]
-                )
+                corners_ll = t.transform(corners_src[:, 0], corners_src[:, 1])
             else:
                 corners_ll = (corners_src[:, 0], corners_src[:, 1])
 
@@ -141,9 +180,10 @@ class Tiler:
             lon1, lat1 = corners_ll[0][1], corners_ll[1][1]
             dlon = (lon1 - lon0) / window.width
             dlat = (lat1 - lat0) / window.height
-
             geo_t = [dlon, 0.0, lon0, 0.0, dlat, lat0]
             return geo_t, make_bounds(lon0, lat0, lon1, lat1)
+        except Exception:
+            return None, None
 
     def _window_bounds_ll(self, src: Any, window: Any) -> list[list[float]]:
         """Project the raster-window bounding box into EPSG:4326."""

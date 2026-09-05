@@ -39,4 +39,8 @@ def make_bounds(
     west: float, south: float, east: float, north: float
 ) -> list[list[float]]:
     """Return bounds in the [[south, west], [north, east]] order the UI expects."""
-    return [[south, west], [north, east]]
+    min_lat = float(min(south, north))
+    max_lat = float(max(south, north))
+    min_lon = float(min(west, east))
+    max_lon = float(max(west, east))
+    return [[min_lat, min_lon], [max_lat, max_lon]]

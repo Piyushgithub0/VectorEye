@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from ..db import get_sessionmaker
 from ..models import Feature
-from ..schemas import FeatureOut, FeaturePatch
+from ..schemas import BatchFeaturePatch, FeatureOut, FeaturePatch
 from ..services.geo import FEATURE_TYPES
 
 router = APIRouter(prefix="/api/features", tags=["features"])
@@ -68,18 +68,48 @@ def get_features(
     return {"type": "FeatureCollection", "features": features}
 
 
+@router.post("/batch-status")
+def batch_patch_features(patch: BatchFeaturePatch):
+    """Batch approve / reject multiple features at once."""
+    if not patch.feature_ids:
+        return {"updated": 0, "status": patch.status}
+    with get_sessionmaker()() as db:
+        from sqlalchemy import update
+        db.execute(
+            update(Feature)
+            .where(Feature.id.in_(patch.feature_ids))
+            .values(status=patch.status)
+        )
+        db.commit()
+    return {"updated": len(patch.feature_ids), "status": patch.status}
+
+
 @router.patch("/{feature_id}", response_model=FeatureOut)
 def patch_feature(feature_id: int, patch: FeaturePatch) -> FeatureOut:
-    """Approve / reject a single feature by id."""
+    """Approve / reject / edit a single feature by id."""
+    from ..config import settings
+
     with get_sessionmaker()() as db:
         row = db.get(Feature, feature_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Feature not found")
-        row.status = patch.status
-        # Ensure we have a serializable model for the response.
-        if row.status == "rejected":
-            # Keep the record but drop its geometry so rejected items stop rendering.
-            row.geometry = None
+        if patch.status is not None:
+            row.status = patch.status
+        if patch.type is not None:
+            row.type = patch.type
+        if patch.className is not None:
+            row.class_name = patch.className
+        if patch.geometry is not None:
+            geom_val: Any = patch.geometry
+            if settings.database_url:
+                try:
+                    from shapely.geometry import shape
+                    from geoalchemy2 import WKTElement
+                    sh = shape(patch.geometry)
+                    geom_val = WKTElement(sh.wkt, srid=4326)
+                except Exception:
+                    pass
+            row.geometry = geom_val
         db.commit()
         db.refresh(row)
         return _feature_to_out(row)
@@ -100,13 +130,21 @@ def _feature_to_out(row: Feature) -> FeatureOut:
 def _geom_geojson(row: Feature) -> dict[str, Any] | None:
     if row.geometry is None:
         return None
+    if isinstance(row.geometry, dict):
+        return row.geometry
     try:
         if hasattr(row.geometry, "__geo_interface__"):
             return row.geometry.__geo_interface__
         from geoalchemy2.shape import to_shape
-
         from shapely.geometry import mapping
 
         return mapping(to_shape(row.geometry))
+    except Exception:
+        pass
+    try:
+        from shapely import wkt
+        from shapely.geometry import mapping
+        text_val = str(getattr(row.geometry, "data", row.geometry))
+        return mapping(wkt.loads(text_val))
     except Exception:
         return None

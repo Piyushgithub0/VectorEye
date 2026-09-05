@@ -6,7 +6,11 @@ from pathlib import Path
 from ..config import settings
 
 
-UPLOAD_ROOT = settings.upload_dir
+# Anchor to backend directory so uploads are always findable regardless of CWD.
+if settings.upload_dir.is_absolute():
+    UPLOAD_ROOT = settings.upload_dir
+else:
+    UPLOAD_ROOT = (settings.backend_dir / settings.upload_dir).resolve()
 
 
 def ensure_upload_dir() -> Path:
@@ -28,7 +32,22 @@ def save_upload(raw: bytes, original_filename: str) -> Path:
 
 
 def resolve_upload_path(stored: str) -> Path:
+    """Resolve a stored filename/path to an absolute on-disk path."""
     p = Path(stored)
-    if not p.is_absolute():
-        p = settings.upload_dir / p
-    return p
+    if p.is_absolute() and p.exists():
+        return p
+    # Try the canonical UPLOAD_ROOT first (backend/uploads).
+    candidate = UPLOAD_ROOT / p.name
+    if candidate.exists():
+        return candidate
+    # Try repo root uploads directory.
+    root_candidate = (settings.repo_root / "uploads" / p.name).resolve()
+    if root_candidate.exists():
+        return root_candidate
+    # Try relative to CWD.
+    cwd_candidate = (settings.upload_dir / p).resolve()
+    if cwd_candidate.exists():
+        return cwd_candidate
+    if p.is_absolute():
+        return p
+    return candidate

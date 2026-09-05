@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react'
 import type { FeatureType, PipelineStage } from '../types'
 import { FEATURE_LABELS, FEATURE_TYPES, FORCE_NEEDS_REVIEW } from '../lib/constants'
 
@@ -41,6 +42,10 @@ interface TopBarProps {
   onFileSelected: (e: React.ChangeEvent<HTMLInputElement>) => void
   fileInputRef: React.RefObject<HTMLInputElement | null>
   onBrowseClick: () => void
+  onGenerateReport?: () => void
+  reportLoading?: boolean
+  onExportVector?: (type: FeatureType | 'all', format: 'geojson' | 'kml' | 'csv', status: 'all' | 'approved') => void
+  onExportCompositePng?: () => void
 }
 
 export function TopBar({
@@ -51,9 +56,25 @@ export function TopBar({
   onFileSelected,
   fileInputRef,
   onBrowseClick,
+  onGenerateReport,
+  reportLoading,
+  onExportVector,
+  onExportCompositePng,
 }: TopBarProps) {
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
   return (
-    <header className="panel z-[1100] relative flex items-center gap-5 px-4 py-2.5">
+    <header className="panel z-[1100] relative flex items-center gap-4 px-4 py-2.5">
       <Logo />
 
       <input
@@ -67,8 +88,91 @@ export function TopBar({
         onClick={onBrowseClick}
         className="rounded-md border border-cyan-400/40 px-3 py-1.5 text-xs font-medium text-cyan-400 transition-colors hover:bg-cyan-400/10 hover:border-cyan-400/60"
       >
-        Upload
+        Upload Raster
       </button>
+
+      {hasProject && onExportVector && (
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className="flex items-center gap-1.5 rounded-md border border-emerald-500/50 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/25 transition-all"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download Vectors ▾
+          </button>
+          {showExportMenu && (
+            <div className="absolute left-0 mt-1 w-56 rounded-lg border border-emerald-500/30 bg-[#0d1322] shadow-2xl z-[1300] py-1 text-xs font-mono">
+              <button
+                onClick={() => {
+                  onExportVector('all', 'geojson', 'all')
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-3 py-2 text-left text-emerald-300 hover:bg-emerald-500/20 flex items-center justify-between transition-colors"
+              >
+                <span>GeoJSON (All Vectors)</span>
+                <span className="text-[10px] text-text-muted">.geojson</span>
+              </button>
+              <button
+                onClick={() => {
+                  onExportVector('all', 'geojson', 'approved')
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-3 py-2 text-left text-text-primary hover:bg-emerald-500/20 flex items-center justify-between transition-colors"
+              >
+                <span>GeoJSON (Approved Only)</span>
+                <span className="text-[10px] text-text-muted">.geojson</span>
+              </button>
+              <button
+                onClick={() => {
+                  onExportVector('all', 'kml', 'all')
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-3 py-2 text-left text-cyan-300 hover:bg-cyan-500/20 flex items-center justify-between transition-colors"
+              >
+                <span>Google Earth (KML)</span>
+                <span className="text-[10px] text-text-muted">.kml</span>
+              </button>
+              <button
+                onClick={() => {
+                  onExportVector('all', 'csv', 'all')
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-3 py-2 text-left text-text-muted hover:bg-white/10 flex items-center justify-between transition-colors"
+              >
+                <span>Attribute Table (CSV)</span>
+                <span className="text-[10px] text-text-muted">.csv</span>
+              </button>
+              {onExportCompositePng && (
+                <button
+                  onClick={() => {
+                    onExportCompositePng()
+                    setShowExportMenu(false)
+                  }}
+                  className="w-full px-3 py-2 text-left text-amber-300 hover:bg-amber-500/20 flex items-center justify-between transition-colors border-t border-cyan-400/10 font-semibold"
+                >
+                  <span>Vector + Image (PNG)</span>
+                  <span className="text-[10px] text-text-muted">.png</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {hasProject && onGenerateReport && (
+        <button
+          onClick={onGenerateReport}
+          disabled={reportLoading}
+          className="flex items-center gap-1.5 rounded-md border border-purple-500/50 bg-purple-500/15 px-3 py-1.5 text-xs font-bold text-purple-300 hover:bg-purple-500/25 transition-all disabled:opacity-50"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          {reportLoading ? 'Generating…' : 'Download QC Report'}
+        </button>
+      )}
 
       <div className="flex items-center gap-1.5">
         {FEATURE_TYPES.map((type) => {

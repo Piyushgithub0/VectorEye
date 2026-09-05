@@ -1,3 +1,13 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production / Build
+dist/
+dist-ssr/
+build/
+
 # Logs
 logs
 *.log
@@ -7,31 +17,70 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Environment & local settings
+.env
+.env.*
+!.env.example
 *.local
 
-# Editor directories and files
+# Backend environment
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+backend/__pycache__/
+backend/**/__pycache__/
+.venv/
+venv/
+ENV/
+env/
+
+# Testing & Linting
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.eslintcache
+
+# SQLite & Databases
+*.db
+*.sqlite
+*.sqlite3
+backend/app.db
+app.db
+
+# Uploads & Storage files (preserve directories via .gitkeep)
+uploads/*
+!uploads/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+storage/*
+!storage/.gitkeep
+backend/storage/*
+!backend/storage/.gitkeep
+
+# IDE / Editor
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-.env
+*.swo
 
-# Backend
-backend/.env
-backend/uploads/*
-backend/storage/*
-!backend/uploads/.gitkeep
-!backend/storage/.gitkeep
-backend/__pycache__/
-backend/**/__pycache__/
-*.pyc
-.venv/
-venv/
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

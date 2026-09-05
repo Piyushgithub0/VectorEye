@@ -8,20 +8,23 @@ from ..services.vectorizer import Vectorizer
 from .base import PipelineStage
 from .router import FeatureRouter
 
+# Confidence below this marks a feature as needing analyst review.
+_NEEDS_REVIEW_THRESHOLD = 0.65
+
 
 class Pipeline:
     """Orchestrates the per-class inference pipeline for one orthophoto.
 
-    Flow: tiling -> detection (per class) -> vectorization -> feature records.
+    Flow: tiling -> batched GPU detection (per class) -> vectorization -> features.
 
     When ML is disabled (ML_ENABLED=0) or the heavy deps are missing, the
     pipeline falls back to a deterministic mock feature generator so the
     frontend QC workflow is testable end-to-end.
     """
 
-    def __init__(self, device: str = "auto") -> None:
-        self.device = device
-        self.router = FeatureRouter(device)
+    def __init__(self, device: str | None = None) -> None:
+        self.device = device or settings.ml_device
+        self.router = FeatureRouter(self.device)
         self.vectorizer = Vectorizer()
         self.stage = PipelineStage.IDLE
         self._progress = None
@@ -52,7 +55,7 @@ class Pipeline:
             avail.get("ultralytics") or avail.get("deepforest")
         )
 
-        self._set_stage(PipelineStage.TILING, "Cropping central tile for inference", 12)
+        self._set_stage(PipelineStage.TILING, "Building tile grid for batched inference", 12)
         if ml:
             features = self._run_real(tiler, orthophoto_id, bounds)
         else:
@@ -64,7 +67,131 @@ class Pipeline:
     def _run_real(
         self, tiler: Tiler, orthophoto_id: int, bounds: list[list[float]]
     ) -> list[dict[str, Any]]:
-        """Run the real models on the orthophoto's tiles."""
+        """Run models on a tile grid with GPU batch inference."""
+        from ..services.geo import FEATURE_TYPES
+
+        tile_size = settings.tile_size
+        overlap = settings.tile_overlap
+        batch_size = max(1, settings.ml_batch_size)
+
+        tiles = list(tiler.iter_tiles(tile_size=tile_size, overlap=overlap))
+        if not tiles:
+            # Fallback: single central crop (legacy path for non-georeferenced rasters).
+            return self._run_single_crop(tiler, orthophoto_id, bounds)
+
+        all_features: list[dict[str, Any]] = []
+        total_tiles = len(tiles)
+        sem_types = ("buildings", "roads", "farms")
+
+        for batch_idx in range(0, total_tiles, batch_size):
+            batch = tiles[batch_idx : batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            total_batches = (total_tiles + batch_size - 1) // batch_size
+            pct_base = 15 + int((batch_idx / max(1, total_tiles)) * 65)
+            self._set_stage(
+                PipelineStage.DETECTING,
+                f"GPU batch {batch_num}/{total_batches} ({len(batch)} tiles)",
+                pct_base,
+            )
+
+            images = [_to_pil(t["data"]) for t in batch]
+            geo_transforms = [t["geo_t"] for t in batch]
+
+            # One semantic GPU pass per tile batch; derive buildings/roads/farms.
+            semantic_node = self.router._semantic
+            if semantic_node is None:
+                from .ultralytics_det import SemanticBuildingNode
+                semantic_node = SemanticBuildingNode(self.device)
+                self.router._semantic = semantic_node
+
+            class_maps: list[Any] = []
+            if semantic_node.check_available():
+                try:
+                    class_maps = semantic_node.semantic_masks_batch(images)
+                except Exception:
+                    class_maps = [None] * len(images)
+            else:
+                class_maps = [None] * len(images)
+
+            for tile_i, class_map in enumerate(class_maps):
+                geo_t = geo_transforms[tile_i]
+                if class_map is not None:
+                    for ftype in sem_types:
+                        try:
+                            detections = semantic_node.run_on_class_map(class_map, ftype)
+                            self._append_detections(
+                                all_features, detections, geo_t, ftype, orthophoto_id
+                            )
+                        except Exception:
+                            continue
+
+            # Trees use a separate model (DeepForest).
+            try:
+                tree_results = self.router.detect_batch(images, "trees")
+                for tile_i, detections in enumerate(tree_results):
+                    self._append_detections(
+                        all_features,
+                        detections,
+                        geo_transforms[tile_i],
+                        "trees",
+                        orthophoto_id,
+                    )
+            except Exception:
+                pass
+
+            # Water bodies detection (Visible Water Index)
+            try:
+                water_results = self.router.detect_batch(images, "water")
+                for tile_i, detections in enumerate(water_results):
+                    self._append_detections(
+                        all_features,
+                        detections,
+                        geo_transforms[tile_i],
+                        "water",
+                        orthophoto_id,
+                    )
+            except Exception:
+                pass
+
+        self._set_stage(PipelineStage.VECTORIZING, "Deduplicating overlapping detections", 88)
+        all_features = _dedupe_features(all_features)
+
+        if not all_features:
+            return self._run_mock(orthophoto_id, bounds)
+        return all_features
+
+    def _append_detections(
+        self,
+        all_features: list[dict[str, Any]],
+        detections: list[dict[str, Any]],
+        geo_t: Any,
+        ftype: str,
+        orthophoto_id: int,
+    ) -> None:
+        for det in detections:
+            feats = self._georef_detection(det, geo_t, ftype)
+            for gf in feats:
+                conf = float((gf.get("properties") or {}).get("confidence") or 0.5)
+                props = gf.get("properties") or {}
+                all_features.append(
+                    {
+                        "id": len(all_features) + 1,
+                        "orthophoto_id": orthophoto_id,
+                        "type": ftype,
+                        "class_name": props.get("class") or ftype[:-1],
+                        "confidence": conf,
+                        "status": "needs_review"
+                        if conf < _NEEDS_REVIEW_THRESHOLD
+                        else "approved",
+                        "geometry": gf.get("geometry") or {},
+                        "created_at": "",
+                    }
+                )
+
+    def _run_single_crop(
+        self, tiler: Tiler, orthophoto_id: int, bounds: list[list[float]]
+    ) -> list[dict[str, Any]]:
+        """Legacy single-tile path when georeferencing is unavailable."""
         from ..services.geo import FEATURE_TYPES
 
         all_features: list[dict[str, Any]] = []
@@ -72,51 +199,38 @@ class Pipeline:
         center_lat = (south + north) / 2
         center_lon = (west + east) / 2
 
-        # Georeferencing for this crop: pixel -> (lon, lat) affine.
-        geo_t, crop_bounds = tiler.crop_window_transform(center_lon, center_lat, 1024)
-        crop_data, _ = tiler.crop_window(center_lon, center_lat, 1024)
+        geo_t, _ = tiler.crop_window_transform(center_lon, center_lat, settings.tile_size)
+        crop_data, _ = tiler.crop_window(center_lon, center_lat, settings.tile_size)
         if crop_data is None or geo_t is None:
             return all_features
 
-        import numpy as np
-
-        self._set_stage(PipelineStage.DETECTING, "Running semantic + tree models", 30)
         img = _to_pil(crop_data)
-
-        for i, ftype in enumerate(FEATURE_TYPES):
-            pct = 30 + int(i * 55 / max(1, len(FEATURE_TYPES)))
-            self._set_stage(
-                PipelineStage.DETECTING, f"Detecting {ftype}", pct
-            )
+        for ftype in FEATURE_TYPES:
             try:
                 res = self.router.detect(img, ftype)
                 for m in res:
                     feats = self._georef_detection(m, geo_t, ftype)
                     for gf in feats:
-                        props = gf.get("properties") or {}
+                        conf = float(
+                            (gf.get("properties") or {}).get("confidence") or 0.5
+                        )
                         all_features.append(
                             {
                                 "id": len(all_features) + 1,
                                 "orthophoto_id": orthophoto_id,
                                 "type": ftype,
-                                "class_name": props.get("class") or ftype[:-1],
-                                "confidence": float(props.get("confidence") or 0.5),
-                                "status": "pending",
+                                "class_name": (gf.get("properties") or {}).get("class")
+                                or ftype[:-1],
+                                "confidence": conf,
+                                "status": "needs_review"
+                                if conf < _NEEDS_REVIEW_THRESHOLD
+                                else "approved",
                                 "geometry": gf.get("geometry") or {},
                                 "created_at": "",
                             }
                         )
             except Exception:
-                # Skip classes whose model cannot run this pass.
                 continue
-
-        self._set_stage(PipelineStage.VECTORIZING, "Georeferencing feature geometries", 88)
-
-        # If nothing real came back for any class, fall back to demo features
-        # so the QC workflow is still testable, but only when ML masked out all
-        # classes (e.g. empty tile).
-        if not all_features:
-            return self._run_mock(orthophoto_id, bounds)
         return all_features
 
     def _georef_detection(
@@ -125,13 +239,7 @@ class Pipeline:
         geo_t: Any,
         feature_type: str,
     ) -> list[dict[str, Any]]:
-        """Turn one detector result into geolocated polygons.
-
-        Supports either a binary `mask` (ultralytics seg / langsam style) or a
-        `box` (DeepForest / ultralytics box style). Both are mapped into EPSG:4326
-        using the crop affine `geo_t`. A confidence of 0.5 is used as a floor for
-        the "needs review" thresholding.
-        """
+        """Turn one detector result into geolocated polygons."""
         import numpy as np
 
         mask = det.get("mask")
@@ -180,27 +288,64 @@ class Pipeline:
         return build_demo_features(orthophoto_id, bounds)
 
 
+def _dedupe_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop duplicate detections from overlapping tiles (centroid + type key)."""
+    seen: set[tuple[str, int, int]] = set()
+    kept: list[dict[str, Any]] = []
+    for feat in features:
+        key = _feature_dedupe_key(feat)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        kept.append(feat)
+    return kept
+
+
+def _feature_dedupe_key(feat: dict[str, Any]) -> tuple[str, int, int] | None:
+    """Hash feature type + centroid rounded to ~1 m precision."""
+    geom = feat.get("geometry") or {}
+    coords = geom.get("coordinates")
+    if not coords:
+        return None
+    try:
+        gtype = geom.get("type")
+        if gtype == "Point":
+            lon, lat = coords[0], coords[1]
+        elif gtype == "LineString":
+            mid = coords[len(coords) // 2]
+            lon, lat = mid[0], mid[1]
+        elif gtype == "Polygon":
+            ring = coords[0]
+            lon = sum(p[0] for p in ring) / len(ring)
+            lat = sum(p[1] for p in ring) / len(ring)
+        else:
+            return None
+        return (
+            str(feat.get("type") or ""),
+            int(round(float(lon) * 1e5)),
+            int(round(float(lat) * 1e5)),
+        )
+    except (TypeError, IndexError, ValueError):
+        return None
+
+
 def _to_pil(crop_data: Any):
     import numpy as np
     from PIL import Image
 
     arr = np.asarray(crop_data)
-    # Handle multiband rasterio output: keep first 3 bands (RGB)
     if arr.ndim == 3 and arr.shape[0] >= 3:
-        arr = arr[:3]  # keep only first 3 bands
-        arr = np.transpose(arr, (1, 2, 0))  # (C,H,W) -> (H,W,C)
+        arr = arr[:3]
+        arr = np.transpose(arr, (1, 2, 0))
     elif arr.ndim == 2:
-        arr = np.stack([arr] * 3, axis=-1)  # grayscale -> RGB
-    
-    # Ensure uint8 range [0,255]
+        arr = np.stack([arr] * 3, axis=-1)
+
     if arr.dtype != np.uint8:
         arr = arr.astype(np.uint8)
-    
-    # Clip to valid range
+
     arr = np.clip(arr, 0, 255)
-    
-    # If still not 3-channel, make it 3-channel
+
     if arr.ndim == 2 or arr.shape[2] != 3:
         arr = np.stack([arr] * 3, axis=-1)
-    
+
     return Image.fromarray(arr)

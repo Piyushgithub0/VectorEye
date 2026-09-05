@@ -12,8 +12,15 @@ from typing import Any
 
 def build_demo_features(orthophoto_id: int, bounds: list[list[float]]) -> list[dict[str, Any]]:
     [[south, west], [north, east]] = bounds
-    cx = (south + north) / 2
-    cy = (west + east) / 2
+    clat = (south + north) / 2
+    clon = (west + east) / 2
+    span_lat = max(abs(north - south), 0.0005)
+    span_lon = max(abs(east - west), 0.0005)
+    # Scale coordinates so they stay safely within the orthophoto image boundaries
+    # Authored deltas were based on ~0.04 deg span
+    sx = (span_lon * 0.8) / 0.04
+    sy = (span_lat * 0.8) / 0.04
+
     features: list[dict[str, Any]] = []
     counter = {"id": 1}
 
@@ -39,7 +46,7 @@ def build_demo_features(orthophoto_id: int, bounds: list[list[float]]) -> list[d
         features.append(feat)
         return feat
 
-    # Buildings
+    # Buildings (GeoJSON coordinates format: [lon, lat])
     building_specs = [
         (0.001, 0.001, 0.0008, 0.0006, 0.72),
         (0.004, 0.003, 0.0007, 0.0008, 0.68),
@@ -58,22 +65,40 @@ def build_demo_features(orthophoto_id: int, bounds: list[list[float]]) -> list[d
             {
                 "type": "Polygon",
                 "coordinates": [[
-                    [cx + dx - w, cy + dy - h],
-                    [cx + dx + w, cy + dy - h],
-                    [cx + dx + w, cy + dy + h],
-                    [cx + dx - w, cy + dy + h],
-                    [cx + dx - w, cy + dy - h],
+                    [clon + (dx - w) * sx, clat + (dy - h) * sy],
+                    [clon + (dx + w) * sx, clat + (dy - h) * sy],
+                    [clon + (dx + w) * sx, clat + (dy + h) * sy],
+                    [clon + (dx - w) * sx, clat + (dy + h) * sy],
+                    [clon + (dx - w) * sx, clat + (dy - h) * sy],
                 ]],
             },
             conf,
             "approved" if conf > 0.75 else "pending",
         )
 
-    # Roads
+    # Roads: [lon, lat]
     road_pts = [
-        [[cx - 0.015, cy - 0.012], [cx - 0.008, cy - 0.004], [cx, cy], [cx + 0.006, cy + 0.005], [cx + 0.012, cy + 0.01]],
-        [[cx + 0.002, cy - 0.012], [cx + 0.003, cy - 0.006], [cx, cy], [cx - 0.005, cy + 0.006], [cx - 0.008, cy + 0.012]],
-        [[cx - 0.012, cy - 0.012], [cx - 0.006, cy - 0.006], [cx - 0.002, cy], [cx - 0.006, cy + 0.006], [cx - 0.009, cy + 0.012]],
+        [
+            [clon - 0.015 * sx, clat - 0.012 * sy],
+            [clon - 0.008 * sx, clat - 0.004 * sy],
+            [clon, clat],
+            [clon + 0.006 * sx, clat + 0.005 * sy],
+            [clon + 0.012 * sx, clat + 0.01 * sy],
+        ],
+        [
+            [clon + 0.002 * sx, clat - 0.012 * sy],
+            [clon + 0.003 * sx, clat - 0.006 * sy],
+            [clon, clat],
+            [clon - 0.005 * sx, clat + 0.006 * sy],
+            [clon - 0.008 * sx, clat + 0.012 * sy],
+        ],
+        [
+            [clon - 0.012 * sx, clat - 0.012 * sy],
+            [clon - 0.006 * sx, clat - 0.006 * sy],
+            [clon - 0.002 * sx, clat],
+            [clon - 0.006 * sx, clat + 0.006 * sy],
+            [clon - 0.009 * sx, clat + 0.012 * sy],
+        ],
     ]
     for i, pts in enumerate(road_pts):
         make(
@@ -83,35 +108,35 @@ def build_demo_features(orthophoto_id: int, bounds: list[list[float]]) -> list[d
             "pending",
         )
 
-    # Water river polygon
+    # Water river polygon: [lon, lat]
     make(
         "water",
         {
             "type": "Polygon",
             "coordinates": [[
-                [cx + 0.009, cy - 0.012],
-                [cx + 0.013, cy - 0.008],
-                [cx + 0.014, cy - 0.003],
-                [cx + 0.013, cy + 0.001],
-                [cx + 0.014, cy + 0.005],
-                [cx + 0.012, cy + 0.009],
-                [cx + 0.009, cy + 0.012],
-                [cx + 0.008, cy + 0.008],
-                [cx + 0.009, cy + 0.004],
-                [cx + 0.01, cy - 0.001],
-                [cx + 0.009, cy - 0.006],
-                [cx + 0.008, cy - 0.011],
-                [cx + 0.009, cy - 0.012],
+                [clon + 0.009 * sx, clat - 0.012 * sy],
+                [clon + 0.013 * sx, clat - 0.008 * sy],
+                [clon + 0.014 * sx, clat - 0.003 * sy],
+                [clon + 0.013 * sx, clat + 0.001 * sy],
+                [clon + 0.014 * sx, clat + 0.005 * sy],
+                [clon + 0.012 * sx, clat + 0.009 * sy],
+                [clon + 0.009 * sx, clat + 0.012 * sy],
+                [clon + 0.008 * sx, clat + 0.008 * sy],
+                [clon + 0.009 * sx, clat + 0.004 * sy],
+                [clon + 0.010 * sx, clat - 0.001 * sy],
+                [clon + 0.009 * sx, clat - 0.006 * sy],
+                [clon + 0.008 * sx, clat - 0.011 * sy],
+                [clon + 0.009 * sx, clat - 0.012 * sy],
             ]],
         },
         0.87,
         "pending",
     )
 
-    # Trees
+    # Trees: [lon, lat]
     tree_centers = [
         (-0.012, -0.008), (-0.011, -0.005), (-0.014, -0.003),
-        (-0.01, -0.001), (-0.013, 0.002), (-0.011, 0.005),
+        (-0.010, -0.001), (-0.013, 0.002), (-0.011, 0.005),
         (-0.015, 0.007), (-0.012, 0.009), (-0.009, 0.007),
     ]
     for i, (dx, dy) in enumerate(tree_centers):
@@ -120,28 +145,28 @@ def build_demo_features(orthophoto_id: int, bounds: list[list[float]]) -> list[d
             {
                 "type": "Polygon",
                 "coordinates": [[
-                    [cx + dx - 0.0012, cy + dy - 0.0012],
-                    [cx + dx + 0.0012, cy + dy - 0.0012],
-                    [cx + dx + 0.0012, cy + dy + 0.0012],
-                    [cx + dx - 0.0012, cy + dy + 0.0012],
-                    [cx + dx - 0.0012, cy + dy - 0.0012],
+                    [clon + (dx - 0.0012) * sx, clat + (dy - 0.0012) * sy],
+                    [clon + (dx + 0.0012) * sx, clat + (dy - 0.0012) * sy],
+                    [clon + (dx + 0.0012) * sx, clat + (dy + 0.0012) * sy],
+                    [clon + (dx - 0.0012) * sx, clat + (dy + 0.0012) * sy],
+                    [clon + (dx - 0.0012) * sx, clat + (dy - 0.0012) * sy],
                 ]],
             },
             0.6 + (i % 3) * 0.1,
             "pending",
         )
 
-    # Farms (forced needs_review)
+    # Farms: [lon, lat]
     make(
         "farms",
         {
             "type": "Polygon",
             "coordinates": [[
-                [cx - 0.012, cy + 0.013],
-                [cx - 0.004, cy + 0.014],
-                [cx - 0.003, cy + 0.018],
-                [cx - 0.011, cy + 0.017],
-                [cx - 0.012, cy + 0.013],
+                [clon - 0.012 * sx, clat + 0.013 * sy],
+                [clon - 0.004 * sx, clat + 0.014 * sy],
+                [clon - 0.003 * sx, clat + 0.018 * sy],
+                [clon - 0.011 * sx, clat + 0.017 * sy],
+                [clon - 0.012 * sx, clat + 0.013 * sy],
             ]],
         },
         0.62,
@@ -152,11 +177,11 @@ def build_demo_features(orthophoto_id: int, bounds: list[list[float]]) -> list[d
         {
             "type": "Polygon",
             "coordinates": [[
-                [cx + 0.004, cy - 0.014],
-                [cx + 0.012, cy - 0.015],
-                [cx + 0.013, cy - 0.011],
-                [cx + 0.005, cy - 0.01],
-                [cx + 0.004, cy - 0.014],
+                [clon + 0.004 * sx, clat - 0.014 * sy],
+                [clon + 0.012 * sx, clat - 0.015 * sy],
+                [clon + 0.013 * sx, clat - 0.011 * sy],
+                [clon + 0.005 * sx, clat - 0.010 * sy],
+                [clon + 0.004 * sx, clat - 0.014 * sy],
             ]],
         },
         0.55,

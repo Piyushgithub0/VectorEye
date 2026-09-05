@@ -54,6 +54,16 @@ class Settings:
         # ML
         self.ml_enabled = _env_bool("ML_ENABLED", False)
         self.ml_device = _env_str("ML_DEVICE", "auto")
+        self.ml_batch_size = _env_int("ML_BATCH_SIZE", 4)
+        self.tile_size = _env_int("TILE_SIZE", 1024)
+        try:
+            self.tile_overlap = float(_env_str("TILE_OVERLAP", "0.15") or "0.15")
+        except ValueError:
+            self.tile_overlap = 0.15
+
+        # Mistral (analytical reports)
+        self.mistral_api_key = _env_str("MISTRAL_API_KEY")
+        self.mistral_model = _env_str("MISTRAL_MODEL", "mistral-small-latest")
 
     def resolve_database_url(self) -> str:
         """Return a SQLAlchemy-compatible URL, injecting the driver prefix if needed."""

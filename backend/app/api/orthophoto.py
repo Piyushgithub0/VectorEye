@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_sessionmaker
 from ..models import Orthophoto
+from ..config import settings
 from ..pipeline.pipeline import Pipeline
 from ..schemas import OrthophotoOut, UploadResponse
 from ..services.storage import resolve_upload_path, save_upload
@@ -58,19 +59,35 @@ async def upload_orthophoto(
         tiler = Tiler(saved)
         info = tiler.info()
         bounds = info.get("bounds")
+        if not bounds:
+            bounds = [[18.52 - 0.015, 73.77 - 0.015], [18.52 + 0.015, 73.77 + 0.015]]
         record = {
-            "width": info.get("width") or 0,
-            "height": info.get("height") or 0,
-            "crs": info.get("crs") or "EPSG:32643",
-            "west": bounds[0][1] if bounds else 0.0,
-            "south": bounds[0][0] if bounds else 0.0,
-            "east": bounds[1][1] if bounds else 0.0,
-            "north": bounds[1][0] if bounds else 0.0,
+            "width": info.get("width") or 1024,
+            "height": info.get("height") or 1024,
+            "crs": str(info.get("crs") or "EPSG:4326"),
+            "west": bounds[0][1],
+            "south": bounds[0][0],
+            "east": bounds[1][1],
+            "north": bounds[1][0],
         }
     except Exception:
-        # Not gated: non-georeferenced files still record with zeros.
-        record = {"width": 0, "height": 0, "crs": "EPSG:32643",
-                  "west": 0.0, "south": 0.0, "east": 0.0, "north": 0.0}
+        # Default non-georeferenced images to the demo coordinates (Pune)
+        width, height = 1024, 1024
+        try:
+            from PIL import Image
+            with Image.open(saved) as im:
+                width, height = im.size
+        except Exception:
+            pass
+        record = {
+            "width": width,
+            "height": height,
+            "crs": "EPSG:4326",
+            "west": 73.77 - 0.015,
+            "south": 18.52 - 0.015,
+            "east": 73.77 + 0.015,
+            "north": 18.52 + 0.015,
+        }
 
     with get_sessionmaker()() as db:
         ox = Orthophoto(
@@ -103,7 +120,7 @@ async def upload_orthophoto(
     def work() -> None:
         try:
             _set_job(job_id, stage="tiling", message="Running pipeline", progress=2)
-            pipeline = Pipeline()
+            pipeline = Pipeline(device=settings.ml_device)
             raw_features = pipeline.run(str(saved), orthophoto_id, progress=progress_cb)
             _insert_features(orthophoto_id, raw_features)
             _set_job(job_id, done=True, stage="complete", progress=100)
@@ -121,7 +138,7 @@ def job_status(job_id: str) -> JSONResponse:
 
 def _insert_features(orthophoto_id: int, raw_features: list[dict[str, Any]]) -> None:
     """Insert the vector features produced by the pipeline into the DB."""
-    from geoalchemy2 import WKTElement
+    from ..config import settings
     from ..models import Feature
     from ..services.geo import geojson_to_array
 
@@ -132,16 +149,22 @@ def _insert_features(orthophoto_id: int, raw_features: list[dict[str, Any]]) -> 
             pts = geojson_to_array(geom)
             if len(pts) == 0:
                 continue
-            wkt = _geometry_to_wkt(gtype, pts)
-            if wkt is None:
-                continue
+            geom_val: Any = geom
+            if settings.database_url:
+                wkt = _geometry_to_wkt(gtype, pts)
+                if wkt is None:
+                    continue
+                from geoalchemy2 import WKTElement
+                geom_val = WKTElement(wkt, srid=4326)
+
+            feat_conf = float(f.get("confidence") or 0.5)
             feat = Feature(
                 orthophoto_id=orthophoto_id,
                 type=f["type"],
                 class_name=f.get("class_name") or f["type"][:-1],
-                confidence=f.get("confidence") or 0.5,
-                status=f.get("status") or "pending",
-                geometry=WKTElement(wkt, srid=4326),
+                confidence=feat_conf,
+                status=f.get("status") or ("approved" if feat_conf >= 0.65 else "needs_review"),
+                geometry=geom_val,
             )
             db.add(feat)
         db.commit()
@@ -201,6 +224,20 @@ def _closed_ring(pts: Any) -> list[list[float]]:
     return kept
 
 
+@router.get("/orthophoto/latest", response_model=OrthophotoOut)
+def get_latest_orthophoto() -> Orthophoto:
+    with get_sessionmaker()() as db:
+        stmt = select(Orthophoto).order_by(Orthophoto.id.desc()).limit(20)
+        records = db.execute(stmt).scalars().all()
+        for ox in records:
+            p = resolve_upload_path(ox.path)
+            if p.exists():
+                return ox
+        if records:
+            return records[0]
+        raise HTTPException(status_code=404, detail="No orthophoto found")
+
+
 @router.get("/orthophoto/{orthophoto_id}", response_model=OrthophotoOut)
 def get_orthophoto(orthophoto_id: int) -> Orthophoto:
     with get_sessionmaker()() as db:
@@ -216,8 +253,18 @@ def serve_orthophoto_image(orthophoto_id: int):
 
     Browsers cannot decode GeoTIFF, so we rasterize the central window to RGB PNG
     with a contrast stretch so the picture is actually visible on the map.
+    Caches the generated PNG on disk to avoid re-rendering large GeoTIFFs on every request.
     """
-    from fastapi.responses import Response
+    from fastapi.responses import FileResponse, Response
+    from ..services.storage import UPLOAD_ROOT
+
+    cache_file = UPLOAD_ROOT / f"preview_{orthophoto_id}.png"
+    if cache_file.exists():
+        return FileResponse(
+            str(cache_file),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     with get_sessionmaker()() as db:
         ox = db.get(Orthophoto, orthophoto_id)
@@ -232,51 +279,70 @@ def serve_orthophoto_image(orthophoto_id: int):
         import numpy as np
         from PIL import Image
         import io
+        import rasterio
 
-        tiler = Tiler(str(path))
-        width = w or 2048
-        if width <= 0:
-            width = 2048
-        limit = 2048
-        if width > limit:
-            factor = width / limit
-            crop_px = limit
-        else:
-            factor = 1.0
-            crop_px = width
-        info = tiler.info()
-        bounds = info.get("bounds")
-        if bounds:
-            [[s2, w2], [n2, e2]] = bounds
-            center_lat = (s2 + n2) / 2
-            center_lon = (w2 + e2) / 2
-        else:
-            center_lon, center_lat, crop_px = ox.west or 0.0, ox.south or 0.0, 512
-        crop, _ = tiler.crop_window(center_lon, center_lat, crop_px)
+        with rasterio.open(str(path)) as src:
+            out_h = min(src.height, 2048)
+            out_w = max(1, int(src.width * (out_h / max(src.height, 1))))
+            read_count = min(src.count, 3)
+            indexes = list(range(1, read_count + 1))
+            data = src.read(indexes=indexes, out_shape=(read_count, out_h, out_w))
+            if read_count == 1:
+                data = np.repeat(data, 3, axis=0)
+            data = np.transpose(data, (1, 2, 0))  # (H, W, 3)
 
-        data = np.asarray(crop)
-        h2, w2 = 0, 0
-        if data.ndim == 3 and data.shape[0] <= 4:
-            data = np.transpose(data, (1, 2, 0))  # (C,H,W) -> (H,W,C)
-        if data.ndim == 3:
-            h2, w2 = data.shape[0], data.shape[1]
-            data = data[..., :3]
-        elif data.ndim == 2:
-            h2, w2 = data.shape
-            data = np.stack([data] * 3, axis=-1)
+            try:
+                mask = src.read_masks(1, out_shape=(out_h, out_w))
+            except Exception:
+                mask = None
 
-        if data.size == 0 or w2 == 0 or h2 == 0:
-            raise ValueError("empty crop")
-        data = np.asarray(data, dtype=np.float32)
-        lo, hi = np.percentile(data, 2), np.percentile(data, 98)
-        if hi > lo:
-            data = (data - lo) / (hi - lo)
-        data = np.clip(data * 255.0, 0, 255).astype(np.uint8)
+            if mask is not None:
+                alpha = mask.astype(np.uint8)
+            else:
+                is_zero = np.all(data == 0, axis=-1)
+                alpha = np.where(is_zero, 0, 255).astype(np.uint8)
 
-        img = Image.fromarray(data)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
+            valid = alpha > 0
+            if np.any(valid):
+                valid_data = data[valid].astype(np.float32)
+                lo, hi = np.percentile(valid_data, 2), np.percentile(valid_data, 98)
+                if hi > lo:
+                    stretched = np.clip((data.astype(np.float32) - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+                    data = np.where(alpha[..., None] > 0, stretched, data)
+
+            rgba = np.dstack([data, alpha])
+            img = Image.fromarray(rgba, mode="RGBA")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+            try:
+                cache_file.write_bytes(img_bytes)
+            except Exception:
+                pass
+            return Response(
+                content=img_bytes,
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
     except Exception:
-        raise HTTPException(status_code=500, detail="Could not render image")
+        try:
+            from PIL import Image
+            import io
+
+            with Image.open(str(path)) as im:
+                im = im.convert("RGBA")
+                im.thumbnail((2048, 2048))
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+                try:
+                    cache_file.write_bytes(img_bytes)
+                except Exception:
+                    pass
+                return Response(
+                    content=img_bytes,
+                    media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+        except Exception:
+            raise HTTPException(status_code=500, detail="Could not render image")

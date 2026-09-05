@@ -28,6 +28,19 @@ interface Drawable {
   label: string
 }
 
+const LAYER_COLORS: Record<string, string> = {
+  buildings: '#38bdf8', // Sky cyan
+  roads: '#f59e0b',     // Amber / gold
+  water: '#06b6d4',     // Cyan
+  trees: '#22c55e',     // Emerald green
+  farms: '#ec4899',     // Pink / rose
+}
+
+function getFeatureColor(f: VectorFeature): string {
+  if (f.type === 'farms' || f.status === 'needs_review') return '#ef4444'
+  return LAYER_COLORS[f.type] || CONFIDENCE_LINE[tier(f.confidence)]
+}
+
 function featureToDrawable(
   f: VectorFeature,
   bounds: [[number, number], [number, number]],
@@ -35,7 +48,7 @@ function featureToDrawable(
   height: number,
 ): Drawable[] {
   const g = f.geometry
-  const outc = CONFIDENCE_LINE[tier(f.confidence)]
+  const outc = getFeatureColor(f)
   const toPx = (p: number[]): number[] => {
     const [x, y] = lonLatToPx(p[0], p[1], bounds, width, height)
     return [x, y]
@@ -75,7 +88,7 @@ function featureToDrawable(
   if (g.type === 'Point') {
     return [{
       type: 'point',
-      coords: [[g.coordinates.map((c: number) => c) as number[]]],
+      coords: [[toPx(g.coordinates as number[])]],
       color: outc,
       label: f.type,
     }]
@@ -136,7 +149,7 @@ export function exportOrthophotoImage(orthophoto: Orthophoto, features: VectorFe
       }
     }
     const a = document.createElement('a')
-    a.download = `${orthophoto.filename?.replace(/\.[^.]+$/, '') || 'orthophoto'}-features.png`
+    a.download = `${orthophoto.filename?.replace(/\.[^.]+$/, '') || 'orthophoto'}-vector-overlay.png`
     a.href = canvas.toDataURL('image/png')
     a.click()
   }

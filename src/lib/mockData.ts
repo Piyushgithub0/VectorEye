@@ -121,7 +121,7 @@ export function buildDemoFeatures(): VectorFeature[] {
       ],
     ],
   }
-  features.push(makeFeature('water', riverPoly, 0.87, 'pending'))
+  features.push(makeFeature('water', riverPoly, 0.87, 'approved'))
 
   // Trees — crown polygons clustered in a grove
   const treeCenters: [number, number][] = [

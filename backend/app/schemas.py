@@ -49,8 +49,20 @@ class FeatureOut(BaseModel):
 
 
 class FeaturePatch(BaseModel):
-    """Approve/reject body for PATCH /api/features/{id}."""
+    """Approve/reject/edit body for PATCH /api/features/{id}."""
 
+    status: FeatureStatus | None = None
+    type: FeatureType | None = None
+    className: str | None = Field(default=None, alias="className")
+    geometry: dict[str, Any] | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class BatchFeaturePatch(BaseModel):
+    """Batch approve/reject multiple features at once."""
+
+    feature_ids: list[int]
     status: FeatureStatus
 
 
