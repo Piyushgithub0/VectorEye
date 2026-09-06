@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import type { Feature, FeatureCollection, Geometry } from 'geojson'
-import type { Orthophoto, VectorFeature } from '../types'
+import type { Orthophoto, VectorFeature, OrthophotoLocation } from '../types'
+import { getOrthophotoLocation } from '../api'
 
 interface MapViewProps {
   hasProject: boolean
@@ -96,6 +97,60 @@ export function MapView({
   const layerRefs = useRef<Map<string, L.GeoJSON>>(new Map())
   const selectedRef = useRef<L.Path | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [cursorPos, setCursorPos] = useState<{ lat: number; lng: number } | null>(null)
+  const [locationInfo, setLocationInfo] = useState<OrthophotoLocation | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchLoading, setSearchLoading] = useState(false)
+
+  // Fetch real-world place name & georeferenced location metadata for the orthophoto
+  useEffect(() => {
+    if (!orthophoto?.id) {
+      setLocationInfo(null)
+      return
+    }
+    let active = true
+    getOrthophotoLocation(orthophoto.id)
+      .then((loc) => {
+        if (active) setLocationInfo(loc)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [orthophoto?.id])
+
+  const handleLocateOrthophoto = () => {
+    const map = mapRef.current
+    if (!map || !orthophoto?.bounds) return
+    const raw = orthophoto.bounds as [number, number][]
+    const south = Math.min(raw[0][0], raw[1][0])
+    const north = Math.max(raw[0][0], raw[1][0])
+    const west = Math.min(raw[0][1], raw[1][1])
+    const east = Math.max(raw[0][1], raw[1][1])
+    const bounds = L.latLngBounds([south, west], [north, east])
+    map.flyToBounds(bounds, { padding: [40, 40], maxZoom: 18, duration: 1.2 })
+  }
+
+  const handleSearchPlace = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!searchQuery.trim() || !mapRef.current) return
+    setSearchLoading(true)
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`,
+      )
+      const data = await res.json()
+      if (data && data[0]) {
+        const lat = parseFloat(data[0].lat)
+        const lon = parseFloat(data[0].lon)
+        mapRef.current.flyTo([lat, lon], 15, { duration: 1.5 })
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSearchLoading(false)
+    }
+  }
 
   useEffect(() => {
     ;(window as any)._veApprove = (id: number) => {
@@ -157,6 +212,10 @@ export function MapView({
         { position: 'topright' },
       )
       .addTo(map)
+
+    map.on('mousemove', (e: L.LeafletMouseEvent) => {
+      setCursorPos({ lat: e.latlng.lat, lng: e.latlng.lng })
+    })
 
     // Automatically adjust map viewport when container resizes
     let ro: ResizeObserver | null = null
@@ -521,6 +580,85 @@ export function MapView({
           setDragOver(false)
         }}
       />
+
+      {/* Real-World Navigation & Search Controls (Top Left) */}
+      <div className="pointer-events-auto absolute top-3 left-14 z-[1000] flex items-center gap-2">
+        {orthophoto?.bounds && (
+          <button
+            onClick={handleLocateOrthophoto}
+            title="Locate and center on the real-world orthophoto coordinates"
+            className="flex items-center gap-1.5 rounded-lg border border-cyan-400/40 bg-[#0e1422]/90 px-3 py-1.5 font-mono text-xs font-bold text-cyan-300 shadow-xl backdrop-blur-md hover:bg-cyan-400/20 hover:border-cyan-400/70 transition-all cursor-pointer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <circle cx="12" cy="12" r="7" />
+              <line x1="12" y1="2" x2="12" y2="5" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+              <line x1="2" y1="12" x2="5" y2="12" />
+              <line x1="19" y1="12" x2="22" y2="12" />
+            </svg>
+            <span>Locate Orthophoto</span>
+          </button>
+        )}
+
+        {/* Global place search bar */}
+        <div className="relative">
+          <form onSubmit={handleSearchPlace} className="flex items-center">
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                placeholder="Search location on map..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-48 sm:w-60 rounded-lg border border-cyan-400/25 bg-[#0e1422]/90 py-1.5 pl-8 pr-2.5 font-mono text-xs text-text-primary placeholder:text-text-muted/60 shadow-xl backdrop-blur-md focus:border-cyan-400 focus:w-68 focus:outline-none transition-all"
+              />
+              <svg
+                className="absolute left-2.5 text-cyan-400/70"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              {searchLoading && (
+                <span className="absolute right-2.5 h-3 w-3 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+              )}
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Real-World Geospatial Status Bar (Bottom Left) */}
+      <div className="pointer-events-auto absolute bottom-2 left-3 z-[1000] flex flex-wrap items-center gap-2 font-mono text-[11px]">
+        {orthophoto && (
+          <button
+            onClick={handleLocateOrthophoto}
+            title="Click to fly straight to this real-world location"
+            className="flex items-center gap-1.5 rounded-md border border-cyan-400/30 bg-[#0a0f1d]/90 px-2.5 py-1 text-cyan-300 shadow-lg backdrop-blur-md hover:bg-cyan-400/15 hover:border-cyan-400/60 transition-all cursor-pointer max-w-[340px] sm:max-w-md truncate"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="font-semibold text-text-muted shrink-0">📍 Real Location:</span>
+            <span className="truncate font-medium text-emerald-300">
+              {locationInfo?.place_name
+                ? locationInfo.place_name.split(',').slice(0, 3).join(',')
+                : `${((orthophoto.bounds[0][0] + orthophoto.bounds[1][0]) / 2).toFixed(4)}° N, ${((orthophoto.bounds[0][1] + orthophoto.bounds[1][1]) / 2).toFixed(4)}° E`}
+            </span>
+            <span className="text-text-muted text-[10px] shrink-0 border-l border-cyan-400/20 pl-1.5">
+              CRS: {orthophoto.crs || locationInfo?.crs || 'EPSG:4326'}
+            </span>
+          </button>
+        )}
+
+        {cursorPos && (
+          <div className="hidden sm:flex items-center gap-1.5 rounded-md border border-white/10 bg-[#0a0f1d]/85 px-2.5 py-1 text-text-muted shadow-lg backdrop-blur-md">
+            <span>Lat: <strong className="text-text-primary">{cursorPos.lat.toFixed(5)}°</strong></span>
+            <span>Lon: <strong className="text-text-primary">{cursorPos.lng.toFixed(5)}°</strong></span>
+          </div>
+        )}
+      </div>
 
       {editing && selectedFeature && (
         <div className="pointer-events-auto absolute top-4 left-1/2 -translate-x-1/2 z-[1060] flex items-center gap-3 rounded-xl border border-amber-400/60 bg-[#0c1220]/95 px-4 py-2 shadow-2xl backdrop-blur-md font-mono text-xs text-amber-300 animate-in fade-in slide-in-from-top-2">

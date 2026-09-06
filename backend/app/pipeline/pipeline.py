@@ -9,7 +9,7 @@ from .base import PipelineStage
 from .router import FeatureRouter
 
 # Confidence below this marks a feature as needing analyst review.
-_NEEDS_REVIEW_THRESHOLD = 0.65
+_NEEDS_REVIEW_THRESHOLD = 0.75
 
 
 class Pipeline:

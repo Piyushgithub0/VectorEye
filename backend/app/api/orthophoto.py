@@ -247,6 +247,44 @@ def get_orthophoto(orthophoto_id: int) -> Orthophoto:
         return ox
 
 
+@router.get("/orthophoto/{orthophoto_id}/location")
+def get_orthophoto_location(orthophoto_id: int):
+    """Return real-world geospatial location metadata and reverse-geocoded place name."""
+    with get_sessionmaker()() as db:
+        ox = db.get(Orthophoto, orthophoto_id)
+        if ox is None:
+            raise HTTPException(status_code=404, detail="Orthophoto not found")
+        
+        center_lat = float((ox.south + ox.north) / 2.0)
+        center_lon = float((ox.west + ox.east) / 2.0)
+        
+        place_name = f"{center_lat:.4f}° N, {center_lon:.4f}° E"
+        address_info = {}
+        try:
+            import urllib.request, json
+            url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={center_lat}&lon={center_lon}"
+            req = urllib.request.Request(url, headers={"User-Agent": "VectorEye-GIS/1.0"})
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                data = json.loads(resp.read().decode())
+                if "display_name" in data:
+                    place_name = data["display_name"]
+                address_info = data.get("address", {})
+        except Exception:
+            pass
+
+        return {
+            "id": ox.id,
+            "filename": ox.filename,
+            "center": [center_lat, center_lon],
+            "bounds": ox.bounds,
+            "crs": ox.crs,
+            "place_name": place_name,
+            "address": address_info,
+            "width": ox.width,
+            "height": ox.height,
+        }
+
+
 @router.get("/orthophoto/{orthophoto_id}/image")
 def serve_orthophoto_image(orthophoto_id: int):
     """Serve the orthophoto as a browser-renderable PNG (not GeoTIFF).

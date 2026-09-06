@@ -16,6 +16,8 @@ class OrthophotoOut(BaseModel):
     bounds: list[list[float]]  # [[south, west], [north, east]]
     width: int
     height: int
+    crs: str = "EPSG:4326"
+    location_name: str | None = None
 
 
 class FeatureOut(BaseModel):

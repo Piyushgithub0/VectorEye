@@ -25,4 +25,18 @@ export interface Orthophoto {
   bounds: [[number, number], [number, number]] // [[south, west], [north, east]] for leaflet
   width: number
   height: number
+  crs?: string
+  location_name?: string
+}
+
+export interface OrthophotoLocation {
+  id: number
+  filename: string
+  center: [number, number]
+  bounds: [[number, number], [number, number]]
+  crs: string
+  place_name: string
+  address?: Record<string, string>
+  width: number
+  height: number
 }

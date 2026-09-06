@@ -112,6 +112,12 @@ export async function getOrthophoto(id: number): Promise<Orthophoto> {
   return res.json()
 }
 
+export async function getOrthophotoLocation(id: number): Promise<import('./types').OrthophotoLocation> {
+  const res = await fetch(`${API}/orthophoto/${id}/location`)
+  if (!res.ok) throw new Error('Failed to load orthophoto location')
+  return res.json()
+}
+
 export async function getLatestOrthophoto(): Promise<Orthophoto> {
   const res = await fetch(`${API}/orthophoto/latest`)
   if (!res.ok) throw new Error('Failed to load latest orthophoto')
