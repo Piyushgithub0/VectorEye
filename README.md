@@ -1,75 +1,117 @@
-# React + TypeScript + Vite
+# VectorEye 🛰️👁️
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> **AI-powered geospatial feature extraction and interactive Quality Control (QC) platform for aerial drone and satellite imagery.**
 
-Currently, two official plugins are available:
+VectorEye ingests high-resolution orthophotos (GeoTIFFs), automatically detects geographic features using multi-model computer vision, converts raster predictions into georeferenced vector geometries (GeoJSON / PostGIS), and provides an interactive GIS Quality Control dashboard for human review, verification, and export.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 📸 Output & QC Dashboard
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+![VectorEye QC Dashboard](docs/images/vectoreye-output.jpg)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## ✨ Key Features
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- **Multi-Model AI Detection:**
+  - 🏢 **Buildings**: Semantic rooftop footprint segmentation (YOLO)
+  - 🛣️ **Roads & Infrastructure**: Transportation corridor extraction (YOLO)
+  - 🌾 **Farms & Agriculture**: Field boundary segmentation (YOLO)
+  - 🌲 **Trees & Forestry**: Tree crown and canopy detection (DeepForest)
+  - 💧 **Water Bodies**: Visible Water Index (VWI) spectral color ratio analysis
+- **Human-in-the-Loop QC Panel:**
+  - Interactive Leaflet map overlay of orthophotos and detected vector layers.
+  - Filter by confidence threshold, feature class, and approval status.
+  - One-click approval, rejection, and polygon inspection.
+- **GIS Export & Deliverables:**
+  - Export clean, verified vectors as **GeoJSON** (ready for QGIS, ArcGIS).
+  - Export **KML**, **CSV attribute tables**, and **Composite PNG overlays**.
+  - Generate comprehensive **Executive QC Reports (HTML / PDF)**.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 🔄 End-to-End Workflow
 
 ```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+[GeoTIFF Orthophoto] 
+        │
+        ▼ (Upload)
+┌─────────────────────────────────────────────────────────────┐
+│ 1. INGESTION & TILING                                       │
+│    • Extract spatial bounds, CRS, and location coordinates   │
+│    • Slices high-resolution imagery into processing tiles   │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. MULTI-MODEL AI INFERENCE                                 │
+│    • FeatureRouter dispatches tiles to specialized models:  │
+│      - YOLO (Buildings, Roads, Farms)                       │
+│      - DeepForest (Trees)                                   │
+│      - Spectral VWI (Water)                                 │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. VECTORIZATION & STORAGE                                  │
+│    • Converts pixel masks into smoothed vector polygons     │
+│    • Reprojects coordinates to EPSG:4326 (WGS84)            │
+│    • Stores features with confidence scores in PostGIS/DB   │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. INTERACTIVE QUALITY CONTROL (QC UI)                      │
+│    • Overlays orthophoto + vector layers on Leaflet map     │
+│    • Reviewers inspect, approve, or reject features         │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 5. EXPORT & REPORTING                                       │
+│    • Download verified GeoJSON for GIS applications         │
+│    • Generate comprehensive audit and QA summary reports    │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 🛠️ Tech Stack
+
+- **Backend**: FastAPI, SQLAlchemy, PostGIS / SQLite, GDAL / Rasterio, Ultralytics YOLO, DeepForest, PyTorch
+- **Frontend**: React, TypeScript, Leaflet / React-Leaflet, Tailwind CSS, Vite
+
+---
+
+## 🚀 Quick Start
+
+### 1. Backend Setup
+
+```bash
+cd backend
+python -m venv .venv
+# Windows:
+.\.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+cp .env.example .env
+
+# (Optional: install PyTorch / ML dependencies for live model inference)
+pip install -r requirements-ml.txt
+
+# Start backend server
+python run.py
+```
+> The backend server will run on `http://localhost:8000` (API documentation at `http://localhost:8000/docs`).
+
+### 2. Frontend Setup
+
+```bash
+# In the project root:
+npm install
+npm run dev
+```
+> The dashboard will run on `http://localhost:5173`.
